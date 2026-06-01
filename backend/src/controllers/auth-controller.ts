@@ -35,4 +35,40 @@ export async function signup(req: Request, res: Response): Promise<void> {
 
 export async function signin(req: Request, res: Response): Promise<void> {
   //TODO: Implement signin logic
+  //validate userbody using zod
+  const parsedBody = authSchema.safeParse(req.body);
+
+  if (!parsedBody.success) {
+    sendValidationError(res, parsedBody.error);
+    return;
+  }
+
+  const { username, password } = parsedBody.data;
+
+  //find the user by username
+  const user = await prisma.user.findUnique({ where: { username } });
+
+  //if user doesnt exist return error 
+  if (!user) {
+    res.status(401).json({
+      error: "Invalid username or password"
+    });
+    return;
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+
+  if (!isPasswordValid) {
+    res.status(401).json({
+      error: "Invalid username or password"
+    });
+    return;
+  }
+
+  //if everything is correct, generate JWT
+  res.status(200).json({
+    token: createToken({ userId: user.id }),
+    userId: user.id,
+    username: user.username,
+  });
 }
