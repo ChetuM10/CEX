@@ -30,7 +30,7 @@ export async function sendToEngine(
   type: EngineCommandType,
   payload: Record<string, unknown>,
 ): Promise<EngineResponse> {
-  const correlationId = crypto.randomUUID();
+  const correlationId = crypto.randomUUID(); //creates unique ID  
   const responsePromise = waitForEngineResponse(correlationId, env.engineTimeoutMs);
 
   const message: EngineRequest = {
@@ -47,7 +47,7 @@ export async function sendToEngine(
 export async function listenForEngineResponses(): Promise<void> {
   console.log(`Listening for engine responses on ${env.responseQueue}`);
 
-  for (;;) {
+  for (; ;) {
     const response = await subscriber.brPop(env.responseQueue, 0);
     if (!response) continue;
 
