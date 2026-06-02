@@ -75,7 +75,6 @@ export const ORDERS = new Map<string, OrderRecord>();
 export const FILLS: Fill[] = [];
 
 //helper to seed balance for testing if user is new
-
 export function seedBalanceIfNeeded(userId: string): Record<string, Balance> {
   let userBalances = BALANCES.get(userId);
   if (!userBalances) {
@@ -111,8 +110,14 @@ export function getDepth(payload: Record<string, unknown>): unknown {
 }
 
 export function getOrder(payload: Record<string, unknown>):
-  unknown {
-  throw new Error("getOrder not implemented yet");
+  OrderRecord {
+  const orderId = payload.orderId as string;
+  if (!orderId) throw new Error("Missing orderId in payload");
+
+  const order = ORDERS.get(orderId);
+  if (!order) throw new Error("Order not found");
+
+  return order;
 }
 
 //real implementation will begin from here
