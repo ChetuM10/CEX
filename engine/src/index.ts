@@ -1,6 +1,14 @@
 import "dotenv/config";
 import { createClient } from "redis";
 import { env } from "./utils/env.js";
+import {
+  cancelOrder,
+  createOrder,
+  getDepth,
+  getOrder,
+  getUserBalance,
+} from "./store/exchange-store.js";
+
 
 export type EngineCommandType =
   | "create_order"
@@ -65,34 +73,49 @@ function handleEngineRequest(message: EngineRequest): unknown {
    * - get_order
    * - cancel_order
    */
-
-  // just checking the flow, remove this when you start implementing the logic
-  if (message.type === "create_order") {
-    return {
-      orderId: crypto.randomUUID(),
-      status: "filled",
-      filledQty: DUMMY_SELL_ORDER.qty,
-      averagePrice: DUMMY_SELL_ORDER.price,
-      fills: [
-        {
-          fillId: crypto.randomUUID(),
-          symbol: DUMMY_SELL_ORDER.symbol,
-          price: DUMMY_SELL_ORDER.price,
-          qty: DUMMY_SELL_ORDER.qty,
-          buyOrderId: "request-buy-order",
-          sellOrderId: DUMMY_SELL_ORDER.orderId,
-        },
-      ],
-      note: "Smoke-test response only. Students must replace this with real matching logic.",
-    };
+  const payload = message.payload;
+  switch (message.type) {
+    case "create_order":
+      return createOrder(payload);
+    case "get_depth":
+      return getDepth(payload);
+    case "get_user_balance":
+      return getUserBalance(payload);
+    case "get_order":
+      return getOrder(payload);
+    case "cancel_order":
+      return cancelOrder(payload);
+    default:
+      throw new Error(`Unkown Command:" ${message.type}`)
   }
 
-  throw new Error("TODO(student): implement this engine request type");
+  // // just checking the flow, remove this when you start implementing the logic
+  // if (message.type === "create_order") {
+  //   return {
+  //     orderId: crypto.randomUUID(),
+  //     status: "filled",
+  //     filledQty: DUMMY_SELL_ORDER.qty,
+  //     averagePrice: DUMMY_SELL_ORDER.price,
+  //     fills: [
+  //       {
+  //         fillId: crypto.randomUUID(),
+  //         symbol: DUMMY_SELL_ORDER.symbol,
+  //         price: DUMMY_SELL_ORDER.price,
+  //         qty: DUMMY_SELL_ORDER.qty,
+  //         buyOrderId: "request-buy-order",
+  //         sellOrderId: DUMMY_SELL_ORDER.orderId,
+  //       },
+  //     ],
+  //     note: "Smoke-test response only. Students must replace this with real matching logic.",
+  //   };
+  // }
+
+  // throw new Error("TODO(student): implement this engine request type");
 }
 
 console.log(`Engine listening on Redis queue: ${env.incomingQueue}`);
 
-for (;;) {
+for (; ;) {
   const item = await brokerClient.brPop(env.incomingQueue, 0);
   if (!item) continue;
 
