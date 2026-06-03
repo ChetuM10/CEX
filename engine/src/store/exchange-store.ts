@@ -105,10 +105,11 @@ export function createOrder(payload: Record<string, unknown>): unknown {
   //ensure user has seeded balances
   const userBalances = seedBalanceIfNeeded(userId);
 
-  //lock balance for limit orders
+  //if order is a limit order, lock funds immediately
   if (type === "limit") {
     if (!price || price <= 0) throw new Error("Limited orders require a positive price");
 
+    //lock balance for limit orders
     if (side === "buy") {
       const totalCost = price * qty;
       const usdBalance = userBalances["USD"];
@@ -132,10 +133,236 @@ export function createOrder(payload: Record<string, unknown>): unknown {
     }
   }
 
-  //TODO: Next step will be matching the order or placing it on the book
-  return { userId, type, side, symbol, price, qty, status: "open" };
+  // //TODO: Next step will be matching the order or placing it on the book
+  // return { userId, type, side, symbol, price, qty, status: "open" };
+
+  //create the permanent order record
+  const orderId = crypto.randomUUID();
+  // const now = Date.now();
+
+  const order: OrderRecord = {
+    orderId,
+    userId,
+    side,
+    type,
+    symbol,
+    price,
+    qty,
+    filledQty: 0,
+    status: "open",
+    fills: [],
+    createdAt: Date.now()
+  };
+  ORDERS.set(orderId, order);
+
+  // create orderbook for the symbol if not exists
+  // Each symbol (BTC, ETH, etc.) has its own bids and asks. 
+  if (!ORDERBOOKS.has(symbol)) {
+    ORDERBOOKS.set(symbol, { bids: new Map(), asks: new Map() });
+  }
+  const book = ORDERBOOKS.get(symbol)!;
+
+  //match against the book
+  if (side === "buy") {
+    //sort assks: lowest price first
+    const askPrices = Array.from(book.asks.keys()).sort((a, b) => a - b);
+
+    for (const askPrice of askPrices) {
+      if (order.filledQty >= qty) break;
+      if (price !== null && price < askPrice) break;//buy price must be >= ask price
+
+      const restingOrders = book.asks.get(askPrice) || [];
+      while (restingOrders.length > 0 && order.filledQty < qty) {
+        const askOrder = restingOrders[0];
+        if (!askOrder) break;
+
+        const remainingToFill = qty - order.filledQty;
+        const askRemaining = askOrder.qty - askOrder.filledQty;
+        const fillQty = Math.min(remainingToFill, askRemaining);
+
+        //calculate fill price(match at resting order's price)
+        const fillPrice = askOrder.price;
+        const usdValue = fillPrice * fillQty;
+
+        // Update seller's order progress and mark it as filled or partially filled
+        const fillId = crypto.randomUUID();
+        const fill: Fill = {
+          fillId,
+          symbol,
+          price: fillPrice,
+          qty: fillQty,
+          buyOrderId: orderId,
+          sellOrderId: askOrder.orderId,
+          createdAt: Date.now(),
+        };
+
+        FILLS.push(fill);
+        order.fills.push(fill);
+        order.filledQty += fillQty;
+
+        //update seller order fills
+        const parentAskOrder = ORDERS.get(askOrder.orderId);
+        if (parentAskOrder) {
+          parentAskOrder.fills.push(fill);
+          parentAskOrder.filledQty += fillQty;
+          parentAskOrder.status = parentAskOrder.filledQty === parentAskOrder.qty ? "filled" : "partially_filled";
+        }
+
+        askOrder.filledQty += fillQty;
+        askOrder.status = askOrder.filledQty === askOrder.qty ? "filled" : "partially_filled";
+
+        //Adjust balances: Transfer USD from buyer (Alice) to seller (Bob)
+        const sellerBalances = seedBalanceIfNeeded(askOrder.userId);
+
+        // Buyer USD was locked at the incoming order's price. 
+        // If matched at a lower askPrice, unlock the difference
+        const usdRefund = (price! - fillPrice) * fillQty;
+        userBalances["USD"]!.locked -= (price! * fillQty);
+        userBalances["USD"]!.available += usdRefund;
+
+        // Ensure buyer's token balance is initialized
+        if (!userBalances[symbol]) {
+          userBalances[symbol] = { available: 0, locked: 0 };
+        }
+        userBalances[symbol]!.available += fillQty; // give token to buyer
+
+        sellerBalances["USD"]!.available += usdValue; // give USD to seller
+        // Ensure seller's token balance is initialized
+        if (!sellerBalances[symbol]) {
+          sellerBalances[symbol] = { available: 0, locked: 0 };
+        }
+        sellerBalances[symbol]!.locked -= fillQty; // unlock token from seller
+
+        if (askOrder.status === "filled") {
+          restingOrders.shift();
+        }
+      }
+      if (restingOrders.length === 0) {
+        book.asks.delete(askPrice);
+      }
+    }
+    //update final buyrer order status
+    order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
+
+    //place remaining quantity on bids book
+    if (order.filledQty < qty) {
+      const restingQty = qty - order.filledQty;
+      const limitPrice = price!
+      if (!book.bids.has(limitPrice)) {
+        book.bids.set(limitPrice, []);
+      }
+      book.bids.get(limitPrice)!.push({
+        orderId,
+        userId,
+        side,
+        type: "limit",
+        symbol,
+        price: limitPrice,
+        qty: restingQty,
+        filledQty: 0,
+        status: order.status,
+        createdAt: order.createdAt,
+      });
+    }
+  } else {
+    //sort bids: highest price first
+    const bidPrices = Array.from(book.bids.keys()).sort((a, b) => b - a);
+
+    for (const bidPrice of bidPrices) {
+      if (order.filledQty >= qty) break;
+      if (price !== null && price > bidPrice) break;//sell price must be <= bid price
+
+      const restingOrders = book.bids.get(bidPrice) || [];
+      while (restingOrders.length > 0 && order.filledQty < qty) {
+        const bidOrder = restingOrders[0];
+        if (!bidOrder) break;
+
+        const remainingToFill = qty - order.filledQty;
+        const bidRemaining = bidOrder.qty - bidOrder.filledQty;
+        const fillQty = Math.min(remainingToFill, bidRemaining);
+
+        const fillPrice = bidOrder.price;
+        const usdValue = fillPrice * fillQty;
+
+        // Create a trade record, save it, and update the order's filled quantity
+        const fillId = crypto.randomUUID();
+        const fill: Fill = {
+          fillId,
+          symbol,
+          price: fillPrice,
+          qty: fillQty,
+          buyOrderId: bidOrder.orderId,
+          sellOrderId: orderId,
+          createdAt: Date.now(),
+        };
+
+        FILLS.push(fill);
+        order.fills.push(fill);
+        order.filledQty += fillQty;
+
+        //update buyer order fills
+        const parentBidOrder = ORDERS.get(bidOrder.orderId);
+        if (parentBidOrder) {
+          parentBidOrder.fills.push(fill);
+          parentBidOrder.filledQty += fillQty;
+          parentBidOrder.status = parentBidOrder.filledQty === parentBidOrder.qty ? "filled" : "partially_filled";
+        }
+
+        bidOrder.filledQty += fillQty;
+        bidOrder.status = bidOrder.filledQty === bidOrder.qty ? "filled" : "partially_filled";
+
+        //adjust balances: transfer token from seller to buyer
+        const buyerBalances = seedBalanceIfNeeded(bidOrder.userId);
+
+        userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+        userBalances["USD"]!.available += usdValue; //give USD to seller
+        buyerBalances["USD"]!.locked -= usdValue;   // Unlock USD from buyer
+
+        //ensure buyer's token balance is initialzed
+        if (!buyerBalances[symbol]) {
+          buyerBalances[symbol] = { available: 0, locked: 0 };
+        }
+        buyerBalances[symbol]!.available += fillQty; //give t
+
+        if (bidOrder.status === "filled") {
+          restingOrders.shift();
+        }
+      }
+      if (restingOrders.length === 0) {
+        book.bids.delete(bidPrice);
+      }
+    }
+    //update final seller order status
+    order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
+
+    //place remaining quantity on asks book
+    if (order.filledQty < qty) {
+      const restingQty = qty - order.filledQty;
+      const limitPrice = price!;
+      if (!book.asks.has(limitPrice)) {
+        book.asks.set(limitPrice, []);
+      }
+      book.asks.get(limitPrice)!.push({
+        orderId,
+        userId,
+        side,
+        type: "limit",
+        symbol,
+        price: limitPrice,
+        qty: restingQty,
+        filledQty: 0,
+        status: order.status,
+        createdAt: order.createdAt,
+      });
+    }
+  }
+  return order;
 }
 
+
+
+
+//-------------------------------------------------------------------------------------------//
 export function cancelOrder(payload: Record<string, unknown>): unknown {
   throw new Error("cancelOrder not implemented yet");
 }
