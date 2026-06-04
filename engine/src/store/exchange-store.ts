@@ -74,7 +74,9 @@ export const ORDERBOOKS = new Map<string, OrderBook>();
 export const ORDERS = new Map<string, OrderRecord>();
 export const FILLS: Fill[] = [];
 
-//helper to seed balance for testing if user is new
+//----------------------------------------------------------------------------------------//
+//--------------------helper to seed balance for testing if user is new------------- -----//
+
 export function seedBalanceIfNeeded(userId: string): Record<string, Balance> {
   let userBalances = BALANCES.get(userId);
   if (!userBalances) {
@@ -87,7 +89,9 @@ export function seedBalanceIfNeeded(userId: string): Record<string, Balance> {
   return userBalances;
 }
 
-//handler to fetch user balance
+//----------------------------------------------------------------------------------------//
+//----------------------------handler to fetch user balance-------------------------------//
+
 export function getUserBalance(payload: Record<string, unknown>):
   Record<string, Balance> {
   const userId = payload.userId as string;
@@ -363,14 +367,52 @@ export function createOrder(payload: Record<string, unknown>): unknown {
 
 
 //-------------------------------------------------------------------------------------------//
+//------------Show how much BTC people want to buy and sell at each price------------------//
+export function getDepth(payload: Record<string, unknown>): unknown {
+
+  const symbol = payload.symbol as string;
+  if (!symbol) throw new Error("Missing symbol in payload");
+
+  const book = ORDERBOOKS.get(symbol);
+  if (!book) {
+    return { symbol, bids: [], asks: [] };
+  }
+
+  //Aggregate and group BIDS by price level
+  const bids: DepthLevel[] = [];
+  for (const [price, orders] of book.bids.entries()) {
+    const totalQty = orders.reduce((sum, o) => sum + (o.qty - o.filledQty), 0);
+    if (totalQty > 0) {
+      bids.push({ price, qty: totalQty });
+    }
+  }
+
+  //SORT Bids: Highest price first
+  bids.sort((a, b) => b.price - a.price);
+
+  //Aggregate and group ASKS by price level
+  const asks: DepthLevel[] = [];
+  for (const [price, orders] of book.asks.entries()) {
+    const totalQty = orders.reduce((sum, o) => sum + (o.qty - o.filledQty), 0);
+    if (totalQty > 0) {
+      asks.push({ price, qty: totalQty });
+    }
+  }
+
+  //SORT Asks: lowest price first
+  asks.sort((a, b) => a.price - b.price);
+
+  return { symbol, bids, asks };
+}
+
+//------------------------------------------------------------------------------//
+//----------------------------                  -------------------------------//
 export function cancelOrder(payload: Record<string, unknown>): unknown {
   throw new Error("cancelOrder not implemented yet");
 }
 
-export function getDepth(payload: Record<string, unknown>): unknown {
-  throw new Error("getDepth not implemented yet");
-}
-
+//------------------------------------------------------------------------------//
+//----------------retrieves order status by individual ID-----------------------//
 export function getOrder(payload: Record<string, unknown>):
   OrderRecord {
   const orderId = payload.orderId as string;
@@ -381,5 +423,3 @@ export function getOrder(payload: Record<string, unknown>):
 
   return order;
 }
-
-//real implementation will begin from here
