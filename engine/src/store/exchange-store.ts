@@ -363,9 +363,6 @@ export function createOrder(payload: Record<string, unknown>): unknown {
   return order;
 }
 
-
-
-
 //-------------------------------------------------------------------------------------------//
 //------------Show how much BTC people want to buy and sell at each price------------------//
 export function getDepth(payload: Record<string, unknown>): unknown {
@@ -406,9 +403,79 @@ export function getDepth(payload: Record<string, unknown>): unknown {
 }
 
 //------------------------------------------------------------------------------//
-//----------------------------                  -------------------------------//
+//-----------------------cancelOrder (cancels resting orders)-------------------//
 export function cancelOrder(payload: Record<string, unknown>): unknown {
-  throw new Error("cancelOrder not implemented yet");
+  const userId = payload.userId as string;
+  const orderId = payload.orderId as string;
+
+  if (!userId || !orderId) {
+    throw new Error("Missing userId or orderId in payload");
+  }
+
+  // 1. Locate the order
+  const order = ORDERS.get(orderId);
+  if (!order) {
+    throw new Error("Order not found.");
+  }
+
+  // 2. Validare ownership and status
+  if (order.userId !== userId) {
+    throw new Error("Unauthorized to cancel this order.");
+  }
+
+  if (order.status === "filled") {
+    throw new Error("Cannot cancel a fully filled order.");
+  }
+
+  if (order.status === "cancelled") {
+    throw new Error("Order is already cancelled.")
+  }
+
+  // 3. Remove the order from order book
+  const book = ORDERBOOKS.get(order.symbol);
+  if (book) {
+    const priceLevel = order.price!;
+
+    // Remove the order from the order book.
+    // If nobody is buying/selling at this price anymore, remove that price entry.
+    if (order.side === "buy") {
+      const restingOrders = book.bids.get(priceLevel) || [];
+      const updateOrders = restingOrders.filter((o) => o.orderId !== orderId);
+
+      if (updateOrders.length == 0) {
+        book.bids.delete(priceLevel);
+      } else {
+        book.bids.set(priceLevel, updateOrders);
+      }
+    } else {
+      const restingOrders = book.asks.get(priceLevel) || [];
+      const updateOrders = restingOrders.filter((o) => o.orderId !== orderId);
+      if (updateOrders.length === 0) {
+        book.asks.delete(priceLevel);
+      } else {
+        book.asks.set(priceLevel, updateOrders);
+      }
+    }
+  }
+
+  // 4. Calculate remaining quantity and unlock balances
+  const remainingQty = order.qty - order.filledQty;
+  const userBalances = seedBalanceIfNeeded(userId);
+
+  // Return the remaining locked funds/assets back to the user's available balance.
+  if (order.side === "buy") {
+    const lockedValue = order.price! * remainingQty;
+    userBalances["USD"]!.locked -= lockedValue;
+    userBalances["USD"]!.available += lockedValue;
+  } else {
+    userBalances[order.symbol]!.locked -= remainingQty;
+    userBalances[order.symbol]!.available += remainingQty;
+  }
+
+  // 5. Update status of the order
+  order.status = "cancelled"
+
+  return order;
 }
 
 //------------------------------------------------------------------------------//
