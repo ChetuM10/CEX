@@ -102,7 +102,7 @@ export function getUserBalance(payload: Record<string, unknown>):
 //temporary placeholders to fix compile errors
 export function createOrder(payload: Record<string, unknown>): unknown {
   const { userId, type, side, symbol, price, qty } = payload as unknown as CreateOrderInput;
-  if (!userId || !type || !side || !symbol || !price || !qty) {
+  if (!userId || !type || !side || !symbol || !qty || (type === "limit" && !price)) {
     throw new Error("Invalid order payload!")
   }
 
@@ -218,11 +218,26 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         //Adjust balances: Transfer USD from buyer (Alice) to seller (Bob)
         const sellerBalances = seedBalanceIfNeeded(askOrder.userId);
 
-        // Buyer USD was locked at the incoming order's price. 
-        // If matched at a lower askPrice, unlock the difference
-        const usdRefund = (price! - fillPrice) * fillQty;
-        userBalances["USD"]!.locked -= (price! * fillQty);
-        userBalances["USD"]!.available += usdRefund;
+        // // Buyer USD was locked at the incoming order's price. 
+        // // If matched at a lower askPrice, unlock the difference
+        // const usdRefund = (price! - fillPrice) * fillQty;
+        // userBalances["USD"]!.locked -= (price! * fillQty);
+        // userBalances["USD"]!.available += usdRefund;
+
+        //replaced this with the above code  in order to handle the balance deduction
+        //differently for market buys since they don't have previously locked funds
+
+        if (type == "limit") {
+          const usdRefund = (price! - fillPrice) * fillQty;
+          userBalances["USD"]!.locked -= (price! * fillQty);
+          userBalances["USD"]!.available += usdRefund;
+        } else {
+          //for market orders, deduct directly from available USD
+          if (userBalances["USD"]!.available < usdValue) {
+            throw new Error("Insuffie=cient USD balance for market order.");
+          }
+          userBalances["USD"]!.available -= usdValue;
+        }
 
         // Ensure buyer's token balance is initialized
         if (!userBalances[symbol]) {
@@ -249,7 +264,7 @@ export function createOrder(payload: Record<string, unknown>): unknown {
     order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
 
     //place remaining quantity on bids book
-    if (order.filledQty < qty) {
+    if (type === "limit" && order.filledQty < qty) {
       const restingQty = qty - order.filledQty;
       const limitPrice = price!
       if (!book.bids.has(limitPrice)) {
@@ -318,7 +333,18 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         //adjust balances: transfer token from seller to buyer
         const buyerBalances = seedBalanceIfNeeded(bidOrder.userId);
 
-        userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+        // userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+
+        // userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+        if (type === "limit") {
+          userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+        } else {
+          // For market orders, deduct directly from available tokens
+          if (userBalances[symbol]!.available < fillQty) {
+            throw new Error(`Insufficient ${symbol} balance for market order`);
+          }
+          userBalances[symbol]!.available -= fillQty;
+        }
         userBalances["USD"]!.available += usdValue; //give USD to seller
         buyerBalances["USD"]!.locked -= usdValue;   // Unlock USD from buyer
 
@@ -340,7 +366,7 @@ export function createOrder(payload: Record<string, unknown>): unknown {
     order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
 
     //place remaining quantity on asks book
-    if (order.filledQty < qty) {
+    if (type === "limit" && order.filledQty < qty) {
       const restingQty = qty - order.filledQty;
       const limitPrice = price!;
       if (!book.asks.has(limitPrice)) {
