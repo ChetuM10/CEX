@@ -8,6 +8,7 @@ import {
   getOrder,
   getUserBalance,
 } from "./store/exchange-store.js";
+import { logEngineEvent, recoverEngineState } from "./store/persistence.js";
 
 
 export type EngineCommandType =
@@ -41,18 +42,21 @@ const responseClient = createClient({ url: env.redisUrl }).on("error", (error) =
 
 await Promise.all([brokerClient.connect(), responseClient.connect()]);
 
-// :-)) I added this just to check the flow, remove it when you start
-const DUMMY_SELL_ORDER = {
-  orderId: "dummy-sell-order-1",
-  userId: "dummy-seller",
-  type: "limit",
-  side: "sell",
-  symbol: "BTC",
-  price: 100,
-  qty: 1,
-  filledQty: 0,
-  status: "open",
-};
+//recovery state on startup before handling any new client requests
+await recoverEngineState(responseClient);
+
+// // :-)) I added this just to check the flow, remove it when you start
+// const DUMMY_SELL_ORDER = {
+//   orderId: "dummy-sell-order-1",
+//   userId: "dummy-seller",
+//   type: "limit",
+//   side: "sell",
+//   symbol: "BTC",
+//   price: 100,
+//   qty: 1,
+//   filledQty: 0,
+//   status: "open",
+// };
 
 async function sendResponse(responseQueue: string, response: EngineResponse): Promise<void> {
   await responseClient.lPush(responseQueue, JSON.stringify(response));
@@ -130,6 +134,25 @@ for (; ;) {
 
   try {
     const data = handleEngineRequest(message);
+
+    //WAL (Write-Ahead Log): Log stae-changing operations if they succeed
+    if (message.type === "create_order") {
+      const order = data as any;
+      await logEngineEvent(responseClient, {
+        type: "ORDER_PLACED",
+        payload: {
+          ...message.payload,
+          orderId: order.orderId,
+          createdAt: order.createdAt, //stores the generated ID and STAMP
+        },
+      });
+    } else if (message.type === "cancel_order") {
+      await logEngineEvent(responseClient, {
+        type: "ORDER_CANCELLED",
+        payload: message.payload,
+      });
+    }
+
     await sendResponse(message.responseQueue, {
       correlationId: message.correlationId,
       ok: true,
