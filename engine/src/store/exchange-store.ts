@@ -234,7 +234,7 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         } else {
           //for market orders, deduct directly from available USD
           if (userBalances["USD"]!.available < usdValue) {
-            throw new Error("Insuffie=cient USD balance for market order.");
+            throw new Error("Insufficient USD balance for market order.");
           }
           userBalances["USD"]!.available -= usdValue;
         }
@@ -336,6 +336,10 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         // userBalances[symbol]!.locked -= fillQty; //unlock token from seller
 
         // userBalances[symbol]!.locked -= fillQty; //unlock token from seller
+
+        //          ------------UPDATE sell-side balance---------------     //
+        // Since the seller pre-locked their tokens (like BTC) when placing the limit sell, 
+        // we deduct the sold tokens from their locked balance.
         if (type === "limit") {
           userBalances[symbol]!.locked -= fillQty; //unlock token from seller
         } else {
