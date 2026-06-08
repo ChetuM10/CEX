@@ -141,7 +141,8 @@ export function createOrder(payload: Record<string, unknown>): unknown {
   // return { userId, type, side, symbol, price, qty, status: "open" };
 
   //create the permanent order record
-  const orderId = crypto.randomUUID();
+  const orderId = (payload.orderId as string) || crypto.randomUUID();
+  const createdAt = (payload.createdAt as number) || Date.now();
   // const now = Date.now();
 
   const order: OrderRecord = {
@@ -155,7 +156,7 @@ export function createOrder(payload: Record<string, unknown>): unknown {
     filledQty: 0,
     status: "open",
     fills: [],
-    createdAt: Date.now()
+    createdAt
   };
   ORDERS.set(orderId, order);
 
