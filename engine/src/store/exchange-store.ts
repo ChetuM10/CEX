@@ -261,9 +261,13 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         book.asks.delete(askPrice);
       }
     }
-    //update final buyrer order status
-    order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
 
+    //update final buyrer order status
+    if (type === "market") {
+      order.status = order.filledQty === qty ? "filled" : "cancelled";
+    } else {
+      order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
+    }
     //place remaining quantity on bids book
     if (type === "limit" && order.filledQty < qty) {
       const restingQty = qty - order.filledQty;
@@ -367,8 +371,13 @@ export function createOrder(payload: Record<string, unknown>): unknown {
         book.bids.delete(bidPrice);
       }
     }
+
     //update final seller order status
-    order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
+    if (type === "market") {
+      order.status = order.filledQty === qty ? "filled" : "cancelled";
+    } else {
+      order.status = order.filledQty === 0 ? "open" : order.filledQty === qty ? "filled" : "partially_filled";
+    }
 
     //place remaining quantity on asks book
     if (type === "limit" && order.filledQty < qty) {
@@ -514,10 +523,13 @@ export function cancelOrder(payload: Record<string, unknown>): unknown {
 export function getOrder(payload: Record<string, unknown>):
   OrderRecord {
   const orderId = payload.orderId as string;
+  const userId = payload.userId as string;
   if (!orderId) throw new Error("Missing orderId in payload");
 
   const order = ORDERS.get(orderId);
-  if (!order) throw new Error("Order not found");
-
+  //ensures if the order exists and if it belongs to the requesting user
+  if (!order || order.userId !== userId) {
+    throw new Error("Order not found");
+  }
   return order;
 }
