@@ -460,7 +460,7 @@ export function cancelOrder(payload: Record<string, unknown>): unknown {
 
   // 2. Validare ownership and status
   if (order.userId !== userId) {
-    throw new Error("Unauthorized to cancel this order.");
+    throw new Error("Order not found.");
   }
 
   if (order.status === "filled") {
@@ -527,7 +527,7 @@ export function getOrder(payload: Record<string, unknown>):
   if (!orderId) throw new Error("Missing orderId in payload");
 
   const order = ORDERS.get(orderId);
-  //ensures if the order exists and if it belongs to the requesting user
+  // ensures if the order exists and if it belongs to the requesting user
   if (!order || order.userId !== userId) {
     throw new Error("Order not found");
   }
